@@ -16,7 +16,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error
 from sklearn.decomposition import PCA
 import json
-
+from multiprocessing import Process,Manager
 
 import time
 
@@ -161,40 +161,63 @@ def MAE(truth,predictions,names,indivRun):
 print("begin experiment")
 num_trials = 10
 this_train_sizes = np.linspace(1/len(labels),1,len(labels))
-results = np.zeros((len(this_train_sizes),1))
+results = [0 for i in range(len(this_train_sizes)*num_trials)]
+results = Manager().list([0 for i in range(len(this_train_sizes)*num_trials)])
 
-for n in range(num_trials):
-  print(n)
+def uncertainty(reg,profile_features,modlist,indivRuntimes,available_mask):
+  tree_predictions = []
+  runtime_vec = np.array([indivRuntimes[mod[0]] for mod in modlist])
+  #runtime_vec = np.array([1 for mod in modlist])
+  for tree in range(100):
+      tree_predictions.append(reg.estimators_[tree].predict(profile_features) * runtime_vec * available_mask)
+  return np.var(tree_predictions,axis=0)
+
+def run_trial(profile_features,labels,modlist,this_train_sizes,results,n):
+  print("trial",n)
+  random.seed(n)
+  np.random.seed(n)
   profile_features,labels,modlist = shuffle(profile_features,labels,modlist)
   cur_X_train,cur_y_train = profile_features[0:int(np.ceil(len(labels)*this_train_sizes[0]))],labels[0:int(np.ceil(len(labels)*this_train_sizes[0]))]
-  available_sample = set([i for i in range(int(np.ceil(len(labels)*this_train_sizes[0])),len(labels))])
-  cur_reg = RandomForestRegressor().fit(cur_X_train,cur_y_train)
-  results[0] += MAE(labels,cur_reg.predict(profile_features),modlist,indivRuntimes)
+  available_mask = np.ones(len(labels))
+  available_mask[0:int(np.ceil(len(labels)*this_train_sizes[0]))] = 0
+  reg = RandomForestRegressor().fit(cur_X_train,cur_y_train)
+  results[n*len(this_train_sizes)] += MAE(labels,reg.predict(profile_features),modlist,indivRuntimes)
   for i in range(1,len(this_train_sizes)):
+    num_to_profile = 1
+    uncertain_vals = uncertainty(reg,profile_features,modlist,indivRuntimes,available_mask)
+    uncertain_vals = [(idx,uncertain_vals[idx]) for idx in range(len(uncertain_vals))]
+    uncertain_vals.sort(key=lambda x: x[1],reverse=True)
     samples = []
     sample_costs = []
-    num_to_profile = max(1,int(np.floor(len(labels)*(this_train_sizes[i]-this_train_sizes[i-1]))))
-    available_list = shuffle(list(available_sample)) #for num_to_profile = 1
-    for j in range(len(available_sample)):
-      if num_to_profile == 1:
-        new_sample_idx = [available_list[j]]
-      else:
-        new_sample_idx = random.sample(available_sample,min(num_to_profile,len(available_sample)))
-      new_X_train = np.array([profile_features[idx] for idx in new_sample_idx])
-      new_y_train = np.array([labels[idx] for idx in new_sample_idx])
-      reg = RandomForestRegressor().fit(np.concatenate((cur_X_train,new_X_train)),np.concatenate((cur_y_train,cur_reg.predict(new_X_train))))
-      #reg = RandomForestRegressor().fit(np.concatenate((cur_X_train,new_X_train)),np.concatenate((cur_y_train,new_y_train)))
-      samples.append((new_X_train,new_y_train,new_sample_idx))
-      sample_costs.append(MAE(labels,reg.predict(profile_features),modlist,indivRuntimes))
-      
+    for j in range(len(uncertain_vals)):
+      if available_mask[uncertain_vals[j][0]] != 0:
+        new_train_feat = np.array([profile_features[uncertain_vals[j][0]]])
+        new_train_label = np.array([labels[uncertain_vals[j][0]]])
+        tmp_reg = RandomForestRegressor().fit(np.concatenate((cur_X_train,new_train_feat)),np.concatenate((cur_y_train,new_train_label)))
+        samples.append((new_train_feat,new_train_label,uncertain_vals[j][0]))
+        sample_costs.append(MAE(labels,tmp_reg.predict(profile_features),modlist,indivRuntimes)**2/uncertain_vals[j][1])
+
     best_sample_idx = np.argmin(sample_costs)
-    available_sample = available_sample - set(samples[best_sample_idx][2])
+    available_mask[samples[best_sample_idx][2]] = 0
+
     cur_X_train = np.concatenate((cur_X_train,samples[best_sample_idx][0]))
     cur_y_train = np.concatenate((cur_y_train,samples[best_sample_idx][1]))
-    cur_reg = RandomForestRegressor().fit(cur_X_train,cur_y_train)
-    results[i] += MAE(labels,cur_reg.predict(profile_features),modlist,indivRuntimes)
-    #results[i] += mean_absolute_error(y_test,reg.predict(base_X_test))
+    reg = RandomForestRegressor().fit(cur_X_train,cur_y_train)
+    results[n*len(this_train_sizes) + i] += MAE(labels,reg.predict(profile_features),modlist,indivRuntimes)
+
+procs = []
+for n in range(num_trials):
+  #run_trial(profile_features,labels,modlist,this_train_sizes,results,n)
+  #profile_features,labels,modlist = shuffle(profile_features,labels,modlist)
+  p = Process(target=run_trial, args=(profile_features,labels,modlist,this_train_sizes,results,n))
+  p.start()
+  procs.append(p)
+for n in range(num_trials):
+  procs[n].join()
+
+results = np.array(results).reshape((num_trials,len(this_train_sizes)))
+results = np.sum(results,axis=0)
 results /=num_trials
 
-json.dump(results.tolist(),open("predmae_10sim.json","w"))
-json.dump(this_train_sizes.tolist(),open("trainsize_predmae_10sim.json","w"))
+json.dump(results.tolist(),open("co-mae-uncertainty_10sim.json","w"))
+json.dump(this_train_sizes.tolist(),open("trainsize_co-mae-uncertainty_10sim.json","w"))

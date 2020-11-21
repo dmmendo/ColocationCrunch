@@ -175,6 +175,7 @@ for n in range(num_trials):
     sample_costs = []
     num_to_profile = max(1,int(np.floor(len(labels)*(this_train_sizes[i]-this_train_sizes[i-1]))))
     available_list = shuffle(list(available_sample)) #for num_to_profile = 1
+    K = random.randint(0,99)
     for j in range(len(available_sample)):
       if num_to_profile == 1:
         new_sample_idx = [available_list[j]]
@@ -182,7 +183,7 @@ for n in range(num_trials):
         new_sample_idx = random.sample(available_sample,min(num_to_profile,len(available_sample)))
       new_X_train = np.array([profile_features[idx] for idx in new_sample_idx])
       new_y_train = np.array([labels[idx] for idx in new_sample_idx])
-      reg = RandomForestRegressor().fit(np.concatenate((cur_X_train,new_X_train)),np.concatenate((cur_y_train,cur_reg.predict(new_X_train))))
+      reg = RandomForestRegressor().fit(np.concatenate((cur_X_train,new_X_train)),np.concatenate((cur_y_train,cur_reg.estimators_[K].predict(new_X_train))))
       #reg = RandomForestRegressor().fit(np.concatenate((cur_X_train,new_X_train)),np.concatenate((cur_y_train,new_y_train)))
       samples.append((new_X_train,new_y_train,new_sample_idx))
       sample_costs.append(MAE(labels,reg.predict(profile_features),modlist,indivRuntimes))
@@ -196,5 +197,5 @@ for n in range(num_trials):
     #results[i] += mean_absolute_error(y_test,reg.predict(base_X_test))
 results /=num_trials
 
-json.dump(results.tolist(),open("predmae_10sim.json","w"))
-json.dump(this_train_sizes.tolist(),open("trainsize_predmae_10sim.json","w"))
+json.dump(results.tolist(),open("min_bootstrapped_predmae_10sim.json","w"))
+json.dump(this_train_sizes.tolist(),open("trainsize_min_bootstrapped_predmae_10sim.json","w"))
