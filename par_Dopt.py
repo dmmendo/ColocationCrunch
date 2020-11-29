@@ -189,6 +189,7 @@ def run_trial(profile_features,labels,modlist,this_train_sizes,results,dopt_resu
         dopt_val_max = tmp_val
         best_X_train = cur_X_train
         best_y_train = cur_y_train
+      print(dopt_val_max)
     reg = RandomForestRegressor().fit(best_X_train,best_y_train)
     dopt_results[n*len(this_train_sizes) + i] = dopt_val_max
     results[n*len(this_train_sizes) + i] = MAE(labels,reg.predict(profile_features),modlist,indivRuntimes)
