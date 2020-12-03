@@ -159,10 +159,11 @@ def MAE(truth,predictions,names,indivRun):
 
 """## Limited Data Experiments"""
 print("begin experiment")
-num_trials = 16
+num_trials = 100
 this_train_sizes = np.linspace(1/len(labels),1,len(labels))
-results = [0 for i in range(len(this_train_sizes)*num_trials)]
 results = Manager().list([0 for i in range(len(this_train_sizes)*num_trials)])
+val_results = Manager().list([0 for i in range(len(this_train_sizes)*num_trials)])
+
 
 def uncertainty(reg,profile_features,modlist,indivRuntimes,available_mask):
   tree_predictions = []
@@ -178,7 +179,7 @@ def gen_eval_set(profile_features,labels,modlist,eval_set):
   eval_modlist = np.array([modlist[idx] for idx in eval_set])
   return eval_features,eval_labels,eval_modlist,eval_set
 
-def run_trial(profile_features,labels,modlist,this_train_sizes,results,n):
+def run_trial(profile_features,labels,modlist,this_train_sizes,results,val_results,n):
   print("trial",n)
   random.seed(n)
   np.random.seed(n)
@@ -188,6 +189,8 @@ def run_trial(profile_features,labels,modlist,this_train_sizes,results,n):
   cur_reg = RandomForestRegressor().fit(cur_X_train,cur_y_train)
   results[n*len(this_train_sizes)] += MAE(labels,cur_reg.predict(profile_features),modlist,indivRuntimes)
   eval_set = set(random.sample([i for i in range(len(labels))],int(0.1*len(labels))))
+  eval_features,eval_labels,eval_modlist,eval_set = gen_eval_set(profile_features,labels,modlist,eval_set)
+  val_results[n*len(this_train_sizes)] += MAE(eval_labels,cur_reg.predict(eval_features),eval_modlist,indivRuntimes)
   for i in range(1,len(this_train_sizes)):
     samples = []
     sample_costs = []
@@ -213,20 +216,37 @@ def run_trial(profile_features,labels,modlist,this_train_sizes,results,n):
     cur_y_train = np.concatenate((cur_y_train,samples[best_sample_idx][1]))
     cur_reg = RandomForestRegressor().fit(cur_X_train,cur_y_train)
     results[n*len(this_train_sizes) + i] += MAE(labels,cur_reg.predict(profile_features),modlist,indivRuntimes)
+    val_results[n*len(this_train_sizes) + i] += MAE(eval_labels,cur_reg.predict(eval_features),eval_modlist,indivRuntimes)
+
 
 procs = []
 for n in range(num_trials):
   #run_trial(profile_features,labels,modlist,this_train_sizes,results,n)
   #profile_features,labels,modlist = shuffle(profile_features,labels,modlist)
-  p = Process(target=run_trial, args=(profile_features,labels,modlist,this_train_sizes,results,n))
+  p = Process(target=run_trial, args=(profile_features,labels,modlist,this_train_sizes,results,val_results,n))
   p.start()
   procs.append(p)
 for n in range(num_trials):
   procs[n].join()
 
 results = np.array(results).reshape((num_trials,len(this_train_sizes)))
-results = np.sum(results,axis=0)
-results /=num_trials
+val_results = np.array(val_results).reshape((num_trials,len(this_train_sizes)))
 
-json.dump(results.tolist(),open("staticdatalimit10_boostrapped_predmae_10sim.json","w"))
-json.dump(this_train_sizes.tolist(),open("trainsize_staticdatalimit10_bootstrapped_predmae_10sim.json","w"))
+avg_results = np.sum(results,axis=0) / num_trials
+min_results = np.min(results,axis=0)
+max_results = np.max(results,axis=0)
+
+avg_val_results = np.sum(val_results,axis=0) / num_trials
+min_val_results = np.min(val_results,axis=0)
+max_val_results = np.max(val_results,axis=0)
+
+json.dump(avg_results.tolist(),open("avg_staticdatalimit10_boostrapped_predmae_100sim.json","w"))
+json.dump(min_results.tolist(),open("min_staticdatalimit10_boostrapped_predmae_100sim.json","w"))
+json.dump(max_results.tolist(),open("max_staticdatalimit10_boostrapped_predmae_100sim.json","w"))
+
+json.dump(avg_val_results.tolist(),open("avg_val_staticdatalimit10_boostrapped_predmae_100sim.json","w"))
+json.dump(min_val_results.tolist(),open("min_val_staticdatalimit10_boostrapped_predmae_100sim.json","w"))
+json.dump(max_val_results.tolist(),open("max_val_staticdatalimit10_boostrapped_predmae_100sim.json","w"))
+
+
+json.dump(this_train_sizes.tolist(),open("trainsize_staticdatalimit10_bootstrapped_predmae_100sim.json","w"))
