@@ -158,15 +158,11 @@ class MyProblem(Annealer):
     b = random.randint(0, len(available_list) - 1)
     self.state[a] = available_list[b]
   def energy(self):
-    return 1/fillspace_func([self.X[i] for i in self.state])
+    return 1/D_func([self.X[i] for i in self.state])
 
-def fillspace_func(X):
-  min_dist = float('inf')
-  for entry in combinations(X,2):
-    tmp = np.linalg.norm(entry[0]-entry[1])
-    if tmp < min_dist:
-      min_dist = tmp
-  return min_dist
+def D_func(X):
+  X = np.array(X)
+  return np.linalg.det(np.dot(X.T,X))
 
 def MAE(truth,predictions,names,indivRun):
   total = 0
@@ -187,9 +183,9 @@ num_procs = 1
 num_trials = 50000
 this_train_sizes = np.linspace(0.05,1,20)
 results = Manager().list([0 for i in range(len(this_train_sizes)*num_trials)])
-fillspace_results = Manager().list([0 for i in range(len(this_train_sizes)*num_procs)])
+dopt_results = Manager().list([0 for i in range(len(this_train_sizes)*num_procs)])
 
-def run_trial(profile_features,labels,modlist,this_train_sizes,results,fillspace_results,n,num_trials):
+def run_trial(profile_features,labels,modlist,this_train_sizes,results,dopt_results,n,num_trials):
   print("trial",n)
   random.seed(n)
   np.random.seed(n)
@@ -199,29 +195,29 @@ def run_trial(profile_features,labels,modlist,this_train_sizes,results,fillspace
     tsp = MyProblem(init_state,profile_features)
     tsp.Tmin = 1e-10
     tsp.steps = num_trials
-    best_state, fillspace_val_max = tsp.anneal()
-    fillspace_val_max = 1/fillspace_val_max
+    best_state, dopt_val_max = tsp.anneal()
+    dopt_val_max = 1/dopt_val_max
     best_X_train,best_y_train,best_modlist,best_state = gen_eval_set(profile_features,labels,modlist,best_state)
     reg = RandomForestRegressor().fit(best_X_train,best_y_train)
-    fillspace_results[n*len(this_train_sizes) + i] = fillspace_val_max
+    dopt_results[n*len(this_train_sizes) + i] = dopt_val_max
     results[n*len(this_train_sizes) + i] = MAE(labels,reg.predict(profile_features),modlist,indivRuntimes)
   print("finised",n)
 
 procs = []
 for n in range(num_procs):
-  p = Process(target=run_trial, args=(profile_features,labels,modlist,this_train_sizes,results,fillspace_results,n,num_trials))
+  p = Process(target=run_trial, args=(profile_features,labels,modlist,this_train_sizes,results,dopt_results,n,num_trials))
   p.start()
   procs.append(p)
 for n in range(num_procs):
   procs[n].join()
 
 results = np.array(results).reshape((num_procs,len(this_train_sizes)))
-fillspace_results = np.array(fillspace_results).reshape((num_procs,len(this_train_sizes)))
+dopt_results = np.array(dopt_results).reshape((num_procs,len(this_train_sizes)))
 
-fillspace_idx = np.argmax(fillspace_results,axis=0)
+dopt_idx = np.argmax(dopt_results,axis=0)
 ret_results = np.zeros(len(this_train_sizes))
 for i in range(len(this_train_sizes)):
-  ret_results[i] = results[fillspace_idx[i]][i] 
+  ret_results[i] = results[dopt_idx[i]][i] 
 
-json.dump(ret_results.tolist(),open("simanneal_fillspace_50000sim.json","w"))
-json.dump(this_train_sizes.tolist(),open("trainsize_simanneal_fillspace_50000sim.json","w"))
+json.dump(ret_results.tolist(),open("simanneal_dopt_50000sim.json","w"))
+json.dump(this_train_sizes.tolist(),open("trainsize_simanneal_dopt_50000sim.json","w"))
