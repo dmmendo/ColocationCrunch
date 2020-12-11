@@ -158,8 +158,11 @@ class MyProblem(Annealer):
     b = random.randint(0, len(available_list) - 1)
     self.state[a] = available_list[b]
   def energy(self):
-    return 1/D_func([self.X[i] for i in self.state])
-
+    val = D_func([self.X[i] for i in self.state])
+    if val == 0:
+      return float('inf')
+    else:
+      return 1/val
 def D_func(X):
   X = np.array(X)
   return np.linalg.det(np.dot(X.T,X))
@@ -179,45 +182,55 @@ def gen_eval_set(profile_features,labels,modlist,eval_set):
 
 """## Limited Data Experiments"""
 print("begin experiment")
-num_procs = 1
-num_trials = 50000
+num_procs = 20
+num_trials = 1000000
 this_train_sizes = np.linspace(0.05,1,20)
-results = Manager().list([0 for i in range(len(this_train_sizes)*num_trials)])
+results = Manager().list([0 for i in range(len(this_train_sizes)*num_procs)])
+val_results = Manager().list([0 for i in range(len(this_train_sizes)*num_procs)])
 dopt_results = Manager().list([0 for i in range(len(this_train_sizes)*num_procs)])
 
-def run_trial(profile_features,labels,modlist,this_train_sizes,results,dopt_results,n,num_trials):
+def run_trial(profile_features,labels,modlist,this_train_sizes,results,val_results,dopt_results,n,num_trials):
   print("trial",n)
   random.seed(n)
   np.random.seed(n)
   profile_features,labels,modlist = shuffle(profile_features,labels,modlist)
   for i in range(len(this_train_sizes)):
-    init_state = random.sample([j for j in range(len(labels))],int(this_train_sizes[i]*len(labels)))
-    tsp = MyProblem(init_state,profile_features)
-    tsp.Tmin = 1e-10
-    tsp.steps = num_trials
-    best_state, dopt_val_max = tsp.anneal()
-    dopt_val_max = 1/dopt_val_max
-    best_X_train,best_y_train,best_modlist,best_state = gen_eval_set(profile_features,labels,modlist,best_state)
+    if this_train_sizes[i] != 1:
+      init_state = random.sample([j for j in range(len(labels))],int(this_train_sizes[i]*len(labels)))
+      tsp = MyProblem(init_state,profile_features)
+      tsp.Tmin = 1e-10
+      tsp.steps = num_trials
+      best_state, dopt_val_max = tsp.anneal()
+      dopt_val_max = 1/dopt_val_max
+      best_X_train,best_y_train,best_modlist,best_state = gen_eval_set(profile_features,labels,modlist,best_state)
+    else:
+      best_X_train,best_y_train,best_modlist = profile_features,labels,modlist
+      dopt_val_max = float('inf')
     reg = RandomForestRegressor().fit(best_X_train,best_y_train)
     dopt_results[n*len(this_train_sizes) + i] = dopt_val_max
+    val_results[n*len(this_train_sizes) + i] = MAE(best_y_train,reg.predict(best_X_train),best_modlist,indivRuntimes)
     results[n*len(this_train_sizes) + i] = MAE(labels,reg.predict(profile_features),modlist,indivRuntimes)
   print("finised",n)
 
 procs = []
 for n in range(num_procs):
-  p = Process(target=run_trial, args=(profile_features,labels,modlist,this_train_sizes,results,dopt_results,n,num_trials))
+  p = Process(target=run_trial, args=(profile_features,labels,modlist,this_train_sizes,results,val_results,dopt_results,n,num_trials))
   p.start()
   procs.append(p)
 for n in range(num_procs):
   procs[n].join()
 
 results = np.array(results).reshape((num_procs,len(this_train_sizes)))
+val_results = np.array(val_results).reshape((num_procs,len(this_train_sizes)))
 dopt_results = np.array(dopt_results).reshape((num_procs,len(this_train_sizes)))
 
 dopt_idx = np.argmax(dopt_results,axis=0)
 ret_results = np.zeros(len(this_train_sizes))
+ret_val_results = np.zeros(len(this_train_sizes))
 for i in range(len(this_train_sizes)):
   ret_results[i] = results[dopt_idx[i]][i] 
+  ret_val_results[i] = val_results[dopt_idx[i]][i]
 
-json.dump(ret_results.tolist(),open("simanneal_dopt_50000sim.json","w"))
-json.dump(this_train_sizes.tolist(),open("trainsize_simanneal_dopt_50000sim.json","w"))
+json.dump(ret_results.tolist(),open("simanneal_dopt_1000000sim.json","w"))
+json.dump(ret_val_results.tolist(),open("val_simanneal_dopt_1000000sim.json","w"))
+json.dump(this_train_sizes.tolist(),open("trainsize_simanneal_dopt_1000000sim.json","w"))

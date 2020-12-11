@@ -183,45 +183,55 @@ def gen_eval_set(profile_features,labels,modlist,eval_set):
 
 """## Limited Data Experiments"""
 print("begin experiment")
-num_procs = 1
+num_procs = 20
 num_trials = 50000
 this_train_sizes = np.linspace(0.05,1,20)
-results = Manager().list([0 for i in range(len(this_train_sizes)*num_trials)])
+results = Manager().list([0 for i in range(len(this_train_sizes)*num_procs)])
+val_results = Manager().list([0 for i in range(len(this_train_sizes)*num_procs)])
 fillspace_results = Manager().list([0 for i in range(len(this_train_sizes)*num_procs)])
 
-def run_trial(profile_features,labels,modlist,this_train_sizes,results,fillspace_results,n,num_trials):
+def run_trial(profile_features,labels,modlist,this_train_sizes,results,val_results,fillspace_results,n,num_trials):
   print("trial",n)
   random.seed(n)
   np.random.seed(n)
   profile_features,labels,modlist = shuffle(profile_features,labels,modlist)
   for i in range(len(this_train_sizes)):
-    init_state = random.sample([j for j in range(len(labels))],int(this_train_sizes[i]*len(labels)))
-    tsp = MyProblem(init_state,profile_features)
-    tsp.Tmin = 1e-10
-    tsp.steps = num_trials
-    best_state, fillspace_val_max = tsp.anneal()
-    fillspace_val_max = 1/fillspace_val_max
-    best_X_train,best_y_train,best_modlist,best_state = gen_eval_set(profile_features,labels,modlist,best_state)
+    if this_train_sizes[i] != 1:
+      init_state = random.sample([j for j in range(len(labels))],int(this_train_sizes[i]*len(labels)))
+      tsp = MyProblem(init_state,profile_features)
+      tsp.Tmin = 1e-10
+      tsp.steps = num_trials
+      best_state, fillspace_val_max = tsp.anneal()
+      fillspace_val_max = 1/fillspace_val_max
+      best_X_train,best_y_train,best_modlist,best_state = gen_eval_set(profile_features,labels,modlist,best_state)
+    else:
+      best_X_train,best_y_train,best_modlist = profile_features,labels,modlist
+      fillspace_val_max = float('inf')
     reg = RandomForestRegressor().fit(best_X_train,best_y_train)
     fillspace_results[n*len(this_train_sizes) + i] = fillspace_val_max
+    val_results[n*len(this_train_sizes) + i] = MAE(best_y_train,reg.predict(best_X_train),best_modlist,indivRuntimes)
     results[n*len(this_train_sizes) + i] = MAE(labels,reg.predict(profile_features),modlist,indivRuntimes)
   print("finised",n)
 
 procs = []
 for n in range(num_procs):
-  p = Process(target=run_trial, args=(profile_features,labels,modlist,this_train_sizes,results,fillspace_results,n,num_trials))
+  p = Process(target=run_trial, args=(profile_features,labels,modlist,this_train_sizes,results,val_results,fillspace_results,n,num_trials))
   p.start()
   procs.append(p)
 for n in range(num_procs):
   procs[n].join()
 
 results = np.array(results).reshape((num_procs,len(this_train_sizes)))
+val_results = np.array(val_results).reshape((num_procs,len(this_train_sizes)))
 fillspace_results = np.array(fillspace_results).reshape((num_procs,len(this_train_sizes)))
 
 fillspace_idx = np.argmax(fillspace_results,axis=0)
 ret_results = np.zeros(len(this_train_sizes))
+ret_val_results = np.zeros(len(this_train_sizes))
 for i in range(len(this_train_sizes)):
-  ret_results[i] = results[fillspace_idx[i]][i] 
+  ret_results[i] = results[fillspace_idx[i]][i]
+  ret_val_results[i] = val_results[fillspace_idx[i]][i]
 
 json.dump(ret_results.tolist(),open("simanneal_fillspace_50000sim.json","w"))
+json.dump(ret_val_results.tolist(),open("val_simanneal_fillspace_50000sim.json","w"))
 json.dump(this_train_sizes.tolist(),open("trainsize_simanneal_fillspace_50000sim.json","w"))
